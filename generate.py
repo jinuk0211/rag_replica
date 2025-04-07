@@ -6,13 +6,33 @@ from tqdm import tqdm
 
 sys.path.append(".")
 
-from common.utils import fix_seeds, setup_model_parallel, read_json
 from common.arguments import get_parser, post_process_args, save_args
 from run_src.mcts_utils import GeneratorError
 from run_src.MCTS_for_reasoning_with_rag import Generator, search_for_answers
-from eval_src.Evaluator import *
+from Evaluator import *
 
 
+def fix_seeds(seed):
+    random.seed(seed)
+    np.random.seed(seed)
+    torch.manual_seed(seed)
+    torch.cuda.manual_seed_all(seed)
+    torch.backends.cudnn.deterministic = True
+    torch.backends.cudnn.benchmark = False
+def setup_model_parallel() -> Tuple[int, int]:
+    from fairscale.nn.model_parallel.initialize import initialize_model_parallel
+    local_rank = int(os.environ.get("LOCAL_RANK", -1))
+    world_size = int(os.environ.get("WORLD_SIZE", -1))
+    torch.distributed.init_process_group("nccl")
+    initialize_model_parallel(world_size)
+    torch.cuda.set_device(local_rank)
+    return local_rank, world_size
+def read_json(file_path):
+    assert str(file_path).endswith(".json")
+    with open(file_path, "r", encoding="utf-8") as f:
+        data = json.load(f)
+    return data
+    
 def main(args):
     fix_seeds(args.seed)
     if args.model_parallel:
