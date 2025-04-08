@@ -379,10 +379,12 @@ class Node_Type(Enum):
             return self.exploration_weight * (1 - 0.9 * (rollout_id / self.num_rollouts))
         elif self.weight_scheduler == "const":
             return self.exploration_weight
-
+#--------------------------ROLLOUT_id 받는지점 - i
+    for i in (pbar := trange(args.num_rollouts, disable=True, position=0)):
+        rollout_node = mcts_searcher.do_rollout(root_node, i)
     def _uct_select(self, node: MCTS_Node, rollout_id: int):
         "Select a child of node, balancing exploration & exploitation"
-
+#---------------------------------------------
         # All children of the node should already be expanded
         assert all(n in self.explored_nodes for n in self.parent2children[node])
 
