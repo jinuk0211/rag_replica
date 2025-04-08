@@ -559,6 +559,28 @@ class Generator:
         existing_subquestions_and_subanswers, next_subquestion_id = concat_subqs_and_subas(
             solution_trace, self.question_index
         )
+#-----------------------------------------
+def concat_subqs_and_subas(solution_trace: Dict[int, Dict[str, str]], question_index: int) -> Tuple[str, int]:
+    """Return: concatenated subqs and suba, next subquestion id"""
+    solution_trace_str = ""
+
+    for subquestion_id, solution_step in solution_trace.items():
+        if subquestion_id == 0:
+            continue
+
+        assert subquestion_id > 0
+        assert "subquestion" in solution_step.keys() and "subanswer" in solution_step.keys()
+
+        solution_trace_str += f"Question {question_index}." + str(subquestion_id) + ": " + solution_step["subquestion"]
+        solution_trace_str += "\n"
+        solution_trace_str += (
+            f"Answer {question_index}." + str(subquestion_id) + ": " + solution_step["subanswer"]["text"]
+        )
+        solution_trace_str += "\n"
+
+    next_subquestion_id = int(sorted(solution_trace.keys())[-1]) + 1
+    return solution_trace_str, next_subquestion_id
+#-----------------------------------------
         io_input = (
             decompose_prompt
             + "\n\n"
@@ -610,7 +632,17 @@ class Generator:
             num_return = self.mcts_num_last_votes
         else:
             num_return = self.num_votes
-
+#--------------------------------------
+def reach_terminal_subquestion(subquestion: str, user_question: str):
+    assert subquestion is not None
+    if "Now we can answer" in subquestion:
+        #! remember that: when the original question is answerable, please start the subquestion with "Now we can answer the question: "
+        return True
+    user_question_2nd_part = split_user_question(user_question)[1]
+    if user_question_2nd_part.lower() in subquestion.lower():
+        return True
+    return False
+#--------------------------------------
         io_output_list = self.io.generate(
             io_input_list,
             max_tokens=512,
@@ -649,6 +681,47 @@ class Generator:
                     response_prefix = make_response_prefix(
                         solution_trace, Node_Type.SUBQUESTION, new_subq=subq, new_suba=suba
                     )
+#-------------------------------------
+def make_response_prefix(
+    solution_trace: Dict[int, Dict[str, str]], node_type: Node_Type, new_subq=None, new_suba=None, new_ost_step=None
+) -> str:
+    if node_type in [Node_Type.SUBQUESTION, Node_Type.RE_SUBANSWER]:
+        response_prefix = ""
+        answer_marker = "The answer is"  # todo: hard code "The answer is"
+        for subquestion_id, solution_step in solution_trace.items():
+            if subquestion_id == 0:
+                continue
+
+            assert subquestion_id > 0
+            assert "subquestion" in solution_step.keys() and "subanswer" in solution_step.keys()
+
+            response_prefix += solution_step["subanswer"]["text"].split(answer_marker)[0]
+            response_prefix += " "
+
+        if new_subq is not None and new_suba is not None:
+            response_prefix += new_suba.split(answer_marker)[0]
+
+        response_prefix = response_prefix.strip(" ")
+    elif node_type is Node_Type.OST_STEP:
+        response_prefix = ""
+
+        last_tuple = list(solution_trace.items())[-1]
+        last_tuple_recording = last_tuple[1]
+        if "ost_step" in last_tuple_recording.keys():
+            for step_id, step_text in last_tuple_recording["ost_step"].items():
+                response_prefix += step_text + " "
+
+        if new_ost_step is not None:
+            response_prefix += new_ost_step
+
+        response_prefix = response_prefix.strip(" ")
+    elif node_type is None and solution_trace is None:
+        response_prefix = ""
+    else:
+        raise ValueError(f"Invalid node type: {node_type}.")
+    think = "Let's think step by step. "
+    return think + response_prefix if think not in response_prefix else response_prefix
+#---------------------------------------
                     potential_score_input = "Question: " + user_question + "\nAnswer: " + response_prefix
 
                     potential_score_output = self.io.generate(
@@ -1417,7 +1490,70 @@ def search_for_answers(args, user_question: str, question_id: int, gt_answer: st
         )
         model_solutions.append(best_solution)
         model_all_solutions.append(all_solutions)
+#------------------------
+def stochastic_find_best_solution(
+    root_node,
+    evaluator,
+    enable_potential_score,
+):
+    # todo: what strategy do we use to select best node?
+    """The function finds the best solution from the solution nodes in the MCTS tree.
+    Return: top answer, top solution, confidence of the top answer, the corresponding node of the answer, all solution nodes
+    """
+    solution_nodes = find_valid_solution_nodes(root_node)
 
+    if len(solution_nodes) == 0:
+        return None, None
+
+    def extract_solution_from_node(node):
+        if node.node_type is Node_Type.SUBQUESTION:
+            return node.subanswer
+        elif node.node_type is Node_Type.DIRECT_ANSWER:
+            return node.direct_answer
+        else:
+            return None
+
+    solutions = [extract_solution_from_node(node) for node in solution_nodes]
+
+    def calculate_potential_score_for_solution_node(node):
+        model_answer = evaluator.extract_answer_from_model_completion(extract_solution_from_node(node))
+        potential_answers_history = node.potential_answers_history  # {depth -> [potential answers]}
+        assert potential_answers_history[node.depth] is None
+
+        potential_score = 1
+        for depth, depth_potential_answers in potential_answers_history.items():
+            if depth < node.depth:
+                depth_score = sum(evaluator.check_answers_equiv(dpa, model_answer) for dpa in depth_potential_answers
+                ) / len(depth_potential_answers)
+                potential_score *= depth_score
+
+        node.set_potential_score(potential_score)
+        return potential_score
+
+    prior_weights = (
+        [calculate_potential_score_for_solution_node(node) for node in solution_nodes]
+        if enable_potential_score
+        else None)
+    top_answer, top_completion, top_completion_id, top_confidence = evaluator.stochastic_find_most_confident_answer(
+        completions=solutions, prior_weights=prior_weights
+    )
+    return top_answer, top_completion, top_confidence, solution_nodes[top_completion_id], solution_nodes, solutions
+def find_valid_solution_nodes(root_node):
+    valid_solution_nodes = []
+    def recursion(node):
+        if node.is_valid_solution_node():
+            valid_solution_nodes.append(node)
+            return
+
+        if not node.children:  #! no children
+            return
+
+        for child in node.children:
+            recursion(child)
+
+    recursion(root_node)
+    return valid_solution_nodes
+#-----------------------------------------
         if args.save_tree:
             with open(
                 os.path.join(
