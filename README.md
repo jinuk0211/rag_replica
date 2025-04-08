@@ -78,7 +78,18 @@ class MCTS_Searcher:
         self.parent2children[node] = node.find_children(rollout_id)
 
 #---------------------------
-    def find_children(self, rollout_id: int):
+@unique
+class Node_Type(Enum):
+    USER_QUESTION = "USER_QUESTION"
+    REPHRASED_USER_QUESTION = "REPHRASED_USER_QUESTION"
+    DIRECT_ANSWER = "DIRECT_ANSWER"
+    SUBQUESTION = "SUBQUESTION"
+    RE_SUBANSWER = "RE_SUBANSWER"
+    OST_STEP = "OST_STEP"
+    RAG_STEP = "RAG_STEP"
+    RE_RAGANSWER = "RE_RAGANSWER"
+
+ def find_children(self, rollout_id: int):
         self.children = self.children or self._create_children()
         for child in self.children:
             child.set_rollout_id(rollout_id)
