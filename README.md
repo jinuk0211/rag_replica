@@ -77,6 +77,265 @@ class MCTS_Searcher:
 
         self.parent2children[node] = node.find_children(rollout_id)
 
+#---------------------------
+    def find_children(self, rollout_id: int):
+        self.children = self.children or self._create_children()
+        for child in self.children:
+            child.set_rollout_id(rollout_id)
+        assert self.children
+        return self.children
+       def _create_children(self):
+        def do_action_generate_direct_answers():
+            verbose_print(f"---- Generating direct answers for node {self.id}...", self.verbose)
+
+            #! ACTION: generate direct answer for the user question (w/ or w/o hint)
+            if (
+                self.node_type is not Node_Type.USER_QUESTION
+                and self.node_type is not Node_Type.REPHRASED_USER_QUESTION
+            ):
+                hint = make_hint(self.solution_trace, self.node_type)
+            else:
+                hint = None
+
+            (direct_answer_list, value_list) = self.generator.generate_direct_answers(
+                user_question=self.user_question, paraphrased=self.paraphrased, hint=hint
+            )
+            for direct_answer, value in zip(direct_answer_list, value_list):
+                if np.isnan(value) or value <= 0:
+                    breakpoint()
+                self.children.append(
+                    Reasoning_MCTS_Node(
+                        parent=self,
+                        depth=self.depth + 1,
+                        node_type=Node_Type.DIRECT_ANSWER,
+                        node_value=value,
+                        direct_answer=direct_answer,
+                    )
+                )
+
+        def do_action_generate_subquestions():
+            verbose_print(f"---- Generating subquestions for node {self.id}...", self.verbose)
+
+            #! ACTION: generate new subquestions
+            (subquestion_list, subanswer_list, value_list, potential_answers_list) = (
+                self.generator.generate_subquestions(
+                    user_question=self.user_question, solution_trace=self.solution_trace, paraphrased=self.paraphrased
+                )
+            )
+            for subquestion, subanswer, value, potential_answers in zip(
+                subquestion_list, subanswer_list, value_list, potential_answers_list
+            ):
+                if np.isnan(value) or value <= 0:
+                    value = 0.01
+                    # breakpoint()
+                self.children.append(
+                    Reasoning_MCTS_Node(
+                        parent=self,
+                        depth=self.depth + 1,
+                        node_type=Node_Type.SUBQUESTION,
+                        node_value=value,
+                        subquestion=subquestion,
+                        subanswer=subanswer,
+                        is_new_subquestion=True,
+                        potential_answers=deepcopy(potential_answers),
+                    )
+                )
+
+        def do_action_generate_re_subanswers():
+            verbose_print(f"---- Generating re-subanswers for node {self.id}...", self.verbose)
+
+            #! ACTION: re-generate subanswers for the previous subquestion
+            (re_subanswer_list, value_list, potential_answers_list) = self.generator.generate_re_subanswers(
+                user_question=self.user_question,
+                solution_trace=self.solution_trace,
+                paraphrased=self.paraphrased,
+            )
+            for re_subanswer, value, potential_answers in zip(re_subanswer_list, value_list, potential_answers_list):
+                if np.isnan(value) or value <= 0:
+                    breakpoint()
+                self.children.append(
+                    Reasoning_MCTS_Node(
+                        parent=self,
+                        depth=self.depth + 1,
+                        node_type=Node_Type.RE_SUBANSWER,
+                        node_value=value,
+                        re_subanswer=re_subanswer,
+                        potential_answers=deepcopy(potential_answers),
+                    )
+                )
+        
+        def do_action_generate_rag_and_re_subanswers():
+            verbose_print(f"---- Generating rag and re-subanswers for node {self.id}...", self.verbose)
+
+            #! ACTION: re-generate subanswers for the previous subquestion
+            (re_subanswer_list, value_list, potential_answers_list) = self.generator.generate_rag_and_re_subanswers(
+                user_question=self.user_question,
+                solution_trace=self.solution_trace,
+                paraphrased=self.paraphrased,
+            )
+            for re_subanswer, value, potential_answers in zip(re_subanswer_list, value_list, potential_answers_list):
+                if np.isnan(value) or value <= 0:
+                    breakpoint()
+                self.children.append(
+                    Reasoning_MCTS_Node(
+                        parent=self,
+                        depth=self.depth + 1,
+                        node_type=Node_Type.RE_SUBANSWER,
+                        node_value=value,
+                        re_subanswer=re_subanswer,
+                        potential_answers=deepcopy(potential_answers),
+                    )
+                )
+
+        def do_action_generate_rephrased_user_question():
+            verbose_print(f"---- Generating rephrased user question for node {self.id}...", self.verbose)
+
+            #! ACTION: generate paraphrased question for the root question
+            rephrased_user_question_list, potential_answers_list = self.generator.generate_rephrased_user_question(
+                user_question=self.user_question
+            )
+            for rephrased_user_question, potential_answers in zip(rephrased_user_question_list, potential_answers_list):
+                self.children.append(
+                    Reasoning_MCTS_Node(
+                        parent=self,
+                        depth=self.depth + 1,
+                        node_type=Node_Type.REPHRASED_USER_QUESTION,
+                        rephrased_user_question=rephrased_user_question,
+                        potential_answers=deepcopy(potential_answers),
+                    )
+                )
+
+        def do_action_generate_ost_step(parent_is_subquestion=False):
+            verbose_print(f"---- Generating one-step thought steps for node {self.id}...", self.verbose)
+
+            #! ACTION: generate one-step thought step
+            ost_step_list, potential_answers_list = self.generator.generate_ost_step(
+                user_question=self.user_question,
+                solution_trace=self.solution_trace,
+                paraphrased=self.paraphrased,
+                parent_is_subquestion=parent_is_subquestion,
+            )
+            for ost_step, potential_answers in zip(ost_step_list, potential_answers_list):
+                self.children.append(
+                    Reasoning_MCTS_Node(
+                        parent=self,
+                        depth=self.depth + 1,
+                        node_type=Node_Type.OST_STEP,
+                        ost_step=ost_step,
+                        potential_answers=deepcopy(potential_answers),
+                    )
+                )
+
+        def do_action_generate_question_retrieve():
+            verbose_print(f"---- Generating question retrieve steps for node {self.id}...", self.verbose)
+
+            #! ACTION: generate paraphrased question for the root question
+            retrieved_user_question_list, potential_answers_list = self.generator.generate_user_question_retrieve(
+                user_question=self.user_question
+            )
+            for retrieved_user_question, potential_answers in zip(retrieved_user_question_list, potential_answers_list):
+                self.children.append(
+                    Reasoning_MCTS_Node(
+                        parent=self,
+                        depth=self.depth + 1,
+                        node_type=Node_Type.REPHRASED_USER_QUESTION,
+                        rephrased_user_question=retrieved_user_question, 
+                        potential_answers=deepcopy(potential_answers),
+                    )
+                )
+
+        def do_action_generate_rag_step(parent_is_subquestion=False):
+            verbose_print(f"---- Generating rag-step steps for node {self.id}...", self.verbose)
+
+            #! ACTION: generate one-step thought step
+            ost_step_list, potential_answers_list = self.generator.generate_rag_step(
+                user_question=self.user_question,
+                solution_trace=self.solution_trace,
+                paraphrased=self.paraphrased,
+                parent_is_subquestion=parent_is_subquestion,
+            )
+            print(f"rag step: {ost_step_list}")
+            for ost_step, potential_answers in zip(ost_step_list, potential_answers_list):
+                self.children.append(
+                    Reasoning_MCTS_Node(
+                        parent=self,
+                        depth=self.depth + 1,
+                        node_type=Node_Type.OST_STEP,
+                        ost_step=ost_step,
+                        potential_answers=deepcopy(potential_answers),
+                    )
+                )
+
+        #! create children
+        if self.node_type is Node_Type.USER_QUESTION:
+            with concurrent.futures.ThreadPoolExecutor(max_workers=4) as executor:
+                futures = []
+                # 提交所有无依赖任务到线程池
+                if not self.disable_a1:
+                    do_action_generate_ost_step()
+                if not self.disable_rag:
+                    do_action_generate_rag_step()
+                    do_action_generate_question_retrieve()
+                # futures.append(executor.submit(do_action_generate_question_retrieve))
+                do_action_generate_direct_answers()
+                do_action_generate_subquestions()
+                if not self.disable_a5:
+                    do_action_generate_rephrased_user_question()
+                
+        elif self.node_type is Node_Type.REPHRASED_USER_QUESTION:
+            with concurrent.futures.ThreadPoolExecutor(max_workers=4) as executor:
+                futures = []
+                # 提交所有无依赖任务到线程池
+                if not self.disable_a1:
+                    do_action_generate_ost_step()
+                if not self.disable_rag:
+                    do_action_generate_rag_step()
+                do_action_generate_direct_answers()
+                do_action_generate_subquestions()
+
+        elif self.node_type is Node_Type.DIRECT_ANSWER:
+            raise ValueError("DIRECT_ANSWER node cannot create children!!")
+        elif self.node_type is Node_Type.SUBQUESTION:
+            with concurrent.futures.ThreadPoolExecutor(max_workers=4) as executor:
+                futures = []
+                # 提交所有无依赖任务到线程池
+                if not self.disable_a1:
+                    do_action_generate_ost_step(True)
+                do_action_generate_re_subanswers()
+
+                # 等待所有任务执行完毕
+                if not self.disable_rag:
+                    do_action_generate_rag_step(True)
+
+                do_action_generate_direct_answers()
+                do_action_generate_subquestions()
+                # futures.append(executor.submit(do_action_generate_re_subanswers))
+              
+        elif self.node_type is Node_Type.RE_SUBANSWER:
+            with concurrent.futures.ThreadPoolExecutor(max_workers=4) as executor:
+                futures = []
+                # 提交所有无依赖任务到线程池
+                if not self.disable_a1:
+                    do_action_generate_ost_step(True)
+                if not self.disable_rag:
+                    do_action_generate_rag_step(True)
+                do_action_generate_direct_answers()
+                do_action_generate_subquestions()
+                
+        elif self.node_type is Node_Type.OST_STEP:
+            with concurrent.futures.ThreadPoolExecutor(max_workers=4) as executor:
+                futures = []
+                # 提交所有无依赖任务到线程池
+                if not self.disable_rag:
+                    do_action_generate_rag_step()
+                if not self.disable_a1:
+                    do_action_generate_ost_step()
+                do_action_generate_direct_answers()
+                
+
+        assert self.children
+        return self.children
+#--------------------------------------
     def _simulate(self, node: MCTS_Node, rollout_id: int) -> List[MCTS_Node]:
         "Returns the reward for a random simulation (to completion) of `node`"
         path = []
