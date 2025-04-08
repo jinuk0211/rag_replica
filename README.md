@@ -642,6 +642,15 @@ def reach_terminal_subquestion(subquestion: str, user_question: str):
     if user_question_2nd_part.lower() in subquestion.lower():
         return True
     return False
+def split_user_question(user_question: str):
+    user_question = user_question.strip().rstrip(".")
+    last_period_id = user_question.rfind(".")
+    assert last_period_id < len(user_question) - 1
+    user_question_context = user_question[: last_period_id + 1].strip()
+    user_question_problem = user_question[last_period_id + 1 :].strip()
+    return user_question_context, user_question_problem
+
+
 #--------------------------------------
         io_output_list = self.io.generate(
             io_input_list,
