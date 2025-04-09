@@ -88,14 +88,15 @@ class Node_Type(Enum):
     OST_STEP = "OST_STEP"
     RAG_STEP = "RAG_STEP"
     RE_RAGANSWER = "RE_RAGANSWER"
-
+#find children create children 둘다 mcts_reasoning_node의함수
  def find_children(self, rollout_id: int):
         self.children = self.children or self._create_children()
         for child in self.children:
             child.set_rollout_id(rollout_id)
         assert self.children
         return self.children
-       def _create_children(self):
+
+def _create_children(self):
         def do_action_generate_direct_answers():
             verbose_print(f"---- Generating direct answers for node {self.id}...", self.verbose)
 
