@@ -1579,6 +1579,69 @@ def find_valid_solution_nodes(root_node):
                     chosen_node=chosen_node,
                     file=f,
                 )
+#------------
+def print_tree_from_root(mcts_searcher, rollout_id, root_node, chosen_node=None, file=None):
+    color_print = False if file else True
+
+    def my_print(text):
+        if file:
+            file.write(text + "\n")
+        else:
+            print(text)
+
+    def print_tree(parent_node, node, file, rollout_id):
+        to_print = ""
+
+        num_indent = 4
+        dash = "-" * num_indent * node.depth
+        space = " " * num_indent * node.depth
+
+        attributes = f"Q: {round(mcts_searcher.Q[node], 2)}" + "; " + f"N: {mcts_searcher.N[node]}" + "; "
+        attributes += f"V: {round(node.node_value, 2)}" if node.node_value is not None else "V: None"
+
+        uct_value = "UCT: " + str(
+            round(mcts_searcher._compute_uct(parent_node=parent_node, node=node, rollout_id=rollout_id), 2)
+        )
+        attributes += "; " + uct_value
+
+        solution_marker = "(T) " if node.is_valid_solution_node() else ""
+
+        node_info = "[" + solution_marker + node.__str__() + ": " + attributes + "]"
+        if chosen_node and node == chosen_node:
+            node_info = "[" + node_info + "]"
+        node_info += " "
+
+        if color_print and node.is_valid_solution_node():
+            node_details = Fore.RED + Style.BRIGHT + node_info + Fore.RESET + Style.RESET_ALL
+        else:
+            node_details = node_info
+
+        if node.node_type is Node_Type.USER_QUESTION:
+            gt = node.expected_answer.replace("\n", " ")
+            node_details += f"User: {node.user_question}" + "\n" + space + " " * len(node_info) + f"Ground truth: {gt}"
+        elif node.node_type is Node_Type.REPHRASED_USER_QUESTION:
+            node_details += f"Reph-User: {node.user_question}"
+        elif node.node_type is Node_Type.DIRECT_ANSWER:
+            node_details += f"Ans: {node.direct_answer}"
+        elif node.node_type is Node_Type.SUBQUESTION:
+            node_details += f"Q: {node.subquestion}" + "\n" + space + " " * len(node_info) + f"A: {node.subanswer}"
+        elif node.node_type is Node_Type.RE_SUBANSWER:
+            node_details += f"Re-Ans: {node.re_subanswer}"
+        elif node.node_type is Node_Type.OST_STEP:
+            node_details += f"OST: {node.ost_step}"
+
+        to_print += dash + node_details
+
+        my_print(to_print)
+
+        for child in node.children:
+            print_tree(node, child, file, rollout_id)
+
+        if node.depth == 0:
+            my_print("\n" + "=" * 50 + "\n")
+
+    print_tree(parent_node=None, node=root_node, file=file, rollout_id=rollout_id)
+#----------------------
 
     #! record final traces
     js = [{"trace": node.solution_trace, "rollout_id": node.rollout_id} for node in all_solution_nodes]
