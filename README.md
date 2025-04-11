@@ -1642,7 +1642,7 @@ def print_tree_from_root(mcts_searcher, rollout_id, root_node, chosen_node=None,
 
     print_tree(parent_node=None, node=root_node, file=file, rollout_id=rollout_id)
 #----------------------
-
+ #end for i in (pbar := trange(args.num_rollouts, disable=True, position=0)):
     #! record final traces
     js = [{"trace": node.solution_trace, "rollout_id": node.rollout_id} for node in all_solution_nodes]
     with open(os.path.join(args.answer_sheets_dir, f"Question {question_id:04d} - Final Solutions.json"), "w") as f:
