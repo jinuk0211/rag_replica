@@ -124,7 +124,30 @@ def _create_children(self):
                         direct_answer=direct_answer,
                     )
                 )
+#-=---------------------
+    def generate_direct_answers(self, user_question: str, paraphrased: bool, hint: str):
+        direct_answer_list, value_list = [], []
 
+        #! few shot cot
+        num_return = self.mcts_num_last_votes
+        io_input, cleaned_io_output_list = self._fewshot_cot_answer_question(
+            question=user_question, paraphrased=paraphrased, num_return=num_return, hint=hint
+        )
+
+        try:
+            most_likely_answer, likelihood = self._get_most_likely_answer(cleaned_io_output_list)
+        except Exception as e:
+            raise GeneratorError(
+                source="generate direct answer from: few shot cot",
+                io_input=io_input,
+                io_output_list=cleaned_io_output_list,
+            )
+
+        direct_answer_list.append(most_likely_answer)
+        value_list.append(likelihood)
+
+        return direct_answer_list, value_list
+#---------------------------------
         def do_action_generate_subquestions():
             verbose_print(f"---- Generating subquestions for node {self.id}...", self.verbose)
 
@@ -2020,7 +2043,20 @@ class Reasoning_MCTS_Node(MCTS_Node):
                         potential_answers=deepcopy(potential_answers),
                     )
                 )
+#--------------------
+    def generate_subquestions(
+        self,
+        user_question: str,
+        solution_trace: Dict[int, Dict[str, str]],
+        paraphrased: bool,
+    ):
+        subquestion_list, subanswer_list, value_list = [], [], []
+        decompose_prompt = self.decompose_prompt if not paraphrased else self.decompose_prompt_rephrased
 
+        #! generate subquestions
+        existing_subquestions_and_subanswers, next_subquestion_id = concat_subqs_and_subas(
+            solution_trace, self.question_index)
+#-------------------
         def do_action_generate_re_subanswers():
             verbose_print(f"---- Generating re-subanswers for node {self.id}...", self.verbose)
 
@@ -2043,6 +2079,82 @@ class Reasoning_MCTS_Node(MCTS_Node):
                         potential_answers=deepcopy(potential_answers),
                     )
                 )
+#---------------------------------------
+    def generate_re_subanswers(
+        self,
+        user_question: str,
+        solution_trace: Dict[int, Dict[str, str]],
+        paraphrased: bool,
+    ):
+        re_subanswer_list, value_list = [], []
+
+        user_question_context = user_question
+
+        last_subquestion_id = int(sorted(solution_trace.keys())[-1])
+        last_subquestion = solution_trace[last_subquestion_id]["subquestion"]
+
+        #! few shot cot
+        question = (
+            f"{user_question_context} {last_subquestion}"
+            if not paraphrased
+            else f"{user_question_context} Question: {last_subquestion}"
+        )
+        io_input, cleaned_io_output_list = self._fewshot_cot_answer_question(
+            question=question, paraphrased=paraphrased, num_return=self.num_votes
+        )
+        try:
+            most_likely_answer, likelihood = self._get_most_likely_answer(cleaned_io_output_list)
+        except Exception as e:
+            raise GeneratorError(
+                source="generate re-subanswers: few shot cot",
+                io_input=io_input,
+                io_output_list=cleaned_io_output_list,
+            )
+        re_subanswer_list.append(most_likely_answer)
+        value_list.append(likelihood)
+
+        print(f"re subanswer: {re_subanswer_list}")
+
+        #! generate potential answer to the user question
+        potential_answers_list: List[List[str]] = []
+        if self.enable_potential_score:
+            solution_trace_copy = deepcopy(solution_trace)
+            for re_suba in re_subanswer_list:
+                solution_trace_copy[last_subquestion_id]["subanswer"] = {"text": re_suba}
+                response_prefix = make_response_prefix(solution_trace_copy, Node_Type.SUBQUESTION)
+                potential_score_input = "Question: " + user_question + "\nAnswer: " + response_prefix
+
+                potential_score_output = self.io.generate(
+                    potential_score_input,
+                    num_return=self.num_votes,
+                    max_tokens=128,
+                    stop_tokens=self.fewshot_cot_config["stop_tokens"],
+                )
+                potential_score_input2 = [
+                    "Question: "
+                    + user_question
+                    + "\nAnswer: "
+                    + response_prefix
+                    + z
+                    + "\nTherefore, the answer is"
+                    for z in potential_score_output
+                ]
+                cleaned_io_output_list = self.io.generate(
+                    potential_score_input2,
+                    num_return=1,
+                    max_tokens=128,
+                    stop_tokens=self.fewshot_cot_config["stop_tokens"],
+                )
+                cleaned_io_output_list = [z[0] for z in cleaned_io_output_list]
+
+                potential_answers_list.append(
+                    [self.evaluator.extract_answer_from_model_completion(o) for o in cleaned_io_output_list]
+                )
+        else:
+            potential_answers_list = [None] * len(re_subanswer_list)
+
+        return re_subanswer_list, value_list, potential_answers_list
+#-----------------------------------------------------
         
         def do_action_generate_rag_and_re_subanswers():
             verbose_print(f"---- Generating rag and re-subanswers for node {self.id}...", self.verbose)
@@ -2066,7 +2178,95 @@ class Reasoning_MCTS_Node(MCTS_Node):
                         potential_answers=deepcopy(potential_answers),
                     )
                 )
+#------------------------------
+    def generate_rag_and_re_subanswers(
+        self,
+        user_question: str,
+        solution_trace: Dict[int, Dict[str, str]],
+        paraphrased: bool,
+    ):
+        re_subanswer_list, value_list = [], []
 
+        user_question_context = user_question
+
+        last_subquestion_id = int(sorted(solution_trace.keys())[-1])
+        last_subquestion = solution_trace[last_subquestion_id]["subquestion"]
+
+        #! few shot cot
+        question = (
+            f"{user_question_context}\n\n{last_subquestion}"
+            if not paraphrased
+            else f"{user_question_context} Question: {last_subquestion}"
+        )
+
+        print(f"rag subquestion 1: {question}")
+
+        retrieved_context = self.retriever.retrieve(question)
+
+        question = (
+            f"{user_question_context} {last_subquestion}\n\n### Relevant Context:\n{retrieved_context}."
+            if not paraphrased
+            else f"{user_question_context} Question: {last_subquestion}"
+        )
+        print(f"rag subquestion 2: {question}")
+
+        io_input, cleaned_io_output_list = self._fewshot_cot_answer_question(
+            question=question, paraphrased=paraphrased, num_return=self.num_votes
+        )
+        try:
+            most_likely_answer, likelihood = self._get_most_likely_answer(cleaned_io_output_list)
+            most_likely_answer = [f"{answer.strip().strip('\n')}\n\n### Relevant Context: {retrieved_context}\n" for answer in most_likely_answer]
+        except Exception as e:
+            raise GeneratorError(
+                source="generate re-subanswers: few shot cot",
+                io_input=io_input,
+                io_output_list=cleaned_io_output_list,
+            )
+        re_subanswer_list.append(most_likely_answer)
+        value_list.append(likelihood)
+
+        print(f"rag subq answer {re_subanswer_list}")
+
+        #! generate potential answer to the user question
+        potential_answers_list: List[List[str]] = []
+        if self.enable_potential_score:
+            solution_trace_copy = deepcopy(solution_trace)
+            for re_suba in re_subanswer_list:
+                solution_trace_copy[last_subquestion_id]["subanswer"] = {"text": re_suba}
+                response_prefix = make_response_prefix(solution_trace_copy, Node_Type.SUBQUESTION)
+                potential_score_input = "Question: " + user_question + "\nAnswer: " + response_prefix
+
+                potential_score_output = self.io.generate(
+                    potential_score_input,
+                    num_return=self.num_votes,
+                    max_tokens=128,
+                    stop_tokens=self.fewshot_cot_config["stop_tokens"],
+                )
+                potential_score_input2 = [
+                    "Question: "
+                    + user_question
+                    + "\nAnswer: "
+                    + response_prefix
+                    + z
+                    + "\nTherefore, the answer (arabic numerals) is"
+                    for z in potential_score_output
+                ]
+                cleaned_io_output_list = self.io.generate(
+                    potential_score_input2,
+                    num_return=1,
+                    max_tokens=128,
+                    stop_tokens=self.fewshot_cot_config["stop_tokens"],
+                )
+                cleaned_io_output_list = [z[0] for z in cleaned_io_output_list]
+
+                potential_answers_list.append(
+                    [self.evaluator.extract_answer_from_model_completion(o) for o in cleaned_io_output_list]
+                )
+        else:
+            potential_answers_list = [None] * len(re_subanswer_list)
+
+        return re_subanswer_list, value_list, potential_answers_list
+#-----------------------------------
         def do_action_generate_rephrased_user_question():
             verbose_print(f"---- Generating rephrased user question for node {self.id}...", self.verbose)
 
@@ -2084,7 +2284,52 @@ class Reasoning_MCTS_Node(MCTS_Node):
                         potential_answers=deepcopy(potential_answers),
                     )
                 )
+#----------------------------------------------
+    def generate_rephrased_user_question(self, user_question: str):
+        rephrased_user_question_list = []
+        io_input = self.rephrasing_prompt_template
+        io_input += "\n\n"
+        io_input += "Rephrase Original Question: " + user_question + "\n"
+        io_input += "Rephrased question you generate should start with Given a list of conditions, please answer the question. Condition 1:, and it should be one line"
+        io_output = self.io.generate(model_input=io_input, max_tokens=512, num_return=1, stop_tokens=[])[0]
+        io_output = "Given a list of conditions, please answer the question: " + user_question + " Condition 1:" + io_output.split("Condition 1:")[-1] if "Condition 1:" in io_output else "Given a list of conditions, please answer the question. Condition 1: " + io_output
+        rephrased_user_question_list.append(io_output)
 
+        print(f"Rephrased user question is: {rephrased_user_question_list}")
+
+        #! generate potential answer to the user question
+        potential_answers_list: List[List[str]] = []  # essentially direct answer list
+        if self.enable_potential_score:
+            response_prefix = make_response_prefix(None, None)
+            potential_score_input = "Question: " + rephrased_user_question_list[0] + "\nAnswer: " + response_prefix
+            potential_score_output = self.io.generate(
+                potential_score_input,
+                num_return=self.num_votes,
+                max_tokens=128,
+                stop_tokens=self.fewshot_cot_config["stop_tokens"],
+            )
+            potential_score_input2 = [
+                "Question: "
+                + rephrased_user_question_list[0]
+                + "\nAnswer: "
+                + response_prefix
+                + z
+                + "\nTherefore, the answer (arabic numerals) is"
+                for z in potential_score_output
+            ]
+            cleaned_io_output_list = self.io.generate(
+                potential_score_input2, num_return=1, max_tokens=128, stop_tokens=self.fewshot_cot_config["stop_tokens"]
+            )
+            cleaned_io_output_list = [z[0] for z in cleaned_io_output_list]
+
+            potential_answers_list.append(
+                [self.evaluator.extract_answer_from_model_completion(o) for o in cleaned_io_output_list]
+            )
+        else:
+            potential_answers_list = [None] * len(rephrased_user_question_list)
+
+        return rephrased_user_question_list, potential_answers_list
+#--------------------------------------------
         def do_action_generate_ost_step(parent_is_subquestion=False):
             verbose_print(f"---- Generating one-step thought steps for node {self.id}...", self.verbose)
 
@@ -2105,7 +2350,80 @@ class Reasoning_MCTS_Node(MCTS_Node):
                         potential_answers=deepcopy(potential_answers),
                     )
                 )
+#--------------------------------
+    def generate_ost_step(
+        self,
+        user_question: str,
+        solution_trace: Dict[int, Dict[str, str]],
+        paraphrased: bool,
+        parent_is_subquestion: bool,
+    ):
+        ost_step_list = []
+        if parent_is_subquestion:
+            existing_ost_steps, next_ost_step_id = concat_subqs_subas_as_ost_steps(solution_trace)
 
+        else:
+            existing_ost_steps, next_ost_step_id = concat_ost_steps(solution_trace)        
+        
+        io_input = (
+            self.fewshot_ost_config["prompt_template"].format(
+                examples='',
+                instruction=user_question,
+            )
+            + existing_ost_steps
+            + '\n'
+            + f"The text you generate must start with the string Step {next_ost_step_id}:\n"
+        )
+
+        io_output_list = self.io.generate(
+            model_input=io_input, max_tokens=256, num_return=self.num_a1_steps, stop_tokens=[f"Step {next_ost_step_id+1}", "\n\n\n"]
+        )
+
+        ost_step_list = list(set([io_output.strip().strip('\n') for io_output in io_output_list if io_output.startswith(f"Step {next_ost_step_id}")]))
+        if len(ost_step_list)<1:
+            ost_step_list = list(set([f"Step {next_ost_step_id}: {io_output.strip().strip('\n')}" for io_output in io_output_list]))
+
+        assert(len(ost_step_list)>0)
+
+        #! generate potential answer to the user question
+        potential_answers_list: List[List[str]] = []  # essentially direct answer list
+        if self.enable_potential_score:
+            for ost_step in ost_step_list:
+                response_prefix = make_response_prefix(solution_trace, Node_Type.OST_STEP, new_ost_step=ost_step)
+
+                potential_score_input = "Question: " + user_question + "\nAnswer: " + response_prefix
+
+                potential_score_output = self.io.generate(
+                    potential_score_input,
+                    num_return=self.num_votes,
+                    max_tokens=128,
+                    stop_tokens=[str(next_ost_step_id+1)],
+                )
+                potential_score_input2 = [
+                    "Question: "
+                    + user_question
+                    + "\nAnswer: "
+                    + response_prefix
+                    + z
+                    + "\nTherefore, the answer (arabic numerals) is"
+                    for z in potential_score_output
+                ]
+                cleaned_io_output_list = self.io.generate(
+                    potential_score_input2,
+                    num_return=1,
+                    max_tokens=128,
+                    stop_tokens=[str(next_ost_step_id+1)],
+                )
+                cleaned_io_output_list = [z[0] for z in cleaned_io_output_list]
+
+                potential_answers_list.append(
+                    [self.evaluator.extract_answer_from_model_completion(o) for o in cleaned_io_output_list]
+                )
+        else:
+            potential_answers_list = [None] * len(ost_step_list)
+
+        return ost_step_list, potential_answers_list
+#------------------------------------------
         def do_action_generate_question_retrieve():
             verbose_print(f"---- Generating question retrieve steps for node {self.id}...", self.verbose)
 
@@ -2123,7 +2441,48 @@ class Reasoning_MCTS_Node(MCTS_Node):
                         potential_answers=deepcopy(potential_answers),
                     )
                 )
+#----------------------------
+    def generate_user_question_retrieve(self, user_question: str):
+        rephrased_user_question_list = []
 
+        retrieved_context = self.retriever.retrieve(user_question)
+
+        io_output = f"Given additional informations, please answer the question.\n### Relevant Context: {retrieved_context}\nUser Question: {user_question}." 
+        rephrased_user_question_list.append(io_output)
+
+        #! generate potential answer to the user question
+        potential_answers_list: List[List[str]] = []  # essentially direct answer list
+        if self.enable_potential_score:
+            response_prefix = make_response_prefix(None, None)
+            potential_score_input = "Question: " + rephrased_user_question_list[0] + "\nAnswer: " + response_prefix
+            potential_score_output = self.io.generate(
+                potential_score_input,
+                num_return=self.num_votes,
+                max_tokens=128,
+                stop_tokens=self.fewshot_cot_config["stop_tokens"],
+            )
+            potential_score_input2 = [
+                "Question: "
+                + rephrased_user_question_list[0]
+                + "\nAnswer: "
+                + response_prefix
+                + z
+                + "\nTherefore, the answer is"
+                for z in potential_score_output
+            ]
+            cleaned_io_output_list = self.io.generate(
+                potential_score_input2, num_return=1, max_tokens=128, stop_tokens=self.fewshot_cot_config["stop_tokens"]
+            )
+            cleaned_io_output_list = [z[0] for z in cleaned_io_output_list]
+
+            potential_answers_list.append(
+                [self.evaluator.extract_answer_from_model_completion(o) for o in cleaned_io_output_list]
+            )
+        else:
+            potential_answers_list = [None] * len(rephrased_user_question_list)
+
+        return rephrased_user_question_list, potential_answers_list
+#---------------------------------------
         def do_action_generate_rag_step(parent_is_subquestion=False):
             verbose_print(f"---- Generating rag-step steps for node {self.id}...", self.verbose)
 
@@ -2145,7 +2504,83 @@ class Reasoning_MCTS_Node(MCTS_Node):
                         potential_answers=deepcopy(potential_answers),
                     )
                 )
+#--------------------------------------
+    def generate_rag_step(
+        self,
+        user_question: str,
+        solution_trace: Dict[int, Dict[str, str]],
+        paraphrased: bool,
+        parent_is_subquestion: bool,
+    ):
+        ost_step_list = []
+        if parent_is_subquestion:
+            existing_ost_steps, next_ost_step_id = concat_subqs_subas_as_ost_steps(solution_trace)
+        else:
+            existing_ost_steps, next_ost_step_id = concat_ost_steps(solution_trace)
+        
+            if next_ost_step_id == 1:
+                return self.generate_ost_step(user_question=user_question, solution_trace=solution_trace, paraphrased=paraphrased, parent_is_subquestion=parent_is_subquestion)
 
+        retrieve_question = f"{user_question}\n\n{existing_ost_steps}"
+        retrieved_context = self.retriever.retrieve(retrieve_question)
+
+        io_input = (
+            self.fewshot_ost_config["prompt_template"].format(
+                examples="",
+                instruction=user_question,
+            )
+            + existing_ost_steps
+            + "\n"
+            + f"### Relevant Context:\n{retrieved_context}\n\n" 
+            + f"The text you generate must start with string of current step index Step {next_ost_step_id}:"
+        )
+        io_output_list = self.io.generate(
+            model_input=io_input, max_tokens=256, num_return=self.num_a1_steps, stop_tokens=['\n\n\n', f'Step {next_ost_step_id+1}',str(next_ost_step_id+1)]
+        )
+        ost_step_list = list(set([f"{io_output.strip().strip('\n')}\n\n### Relevant Context: {retrieved_context}\n" for io_output in io_output_list if io_output.startswith(f"Step {next_ost_step_id}")]))
+        if len(ost_step_list) < 1:
+            ost_step_list = list(set([f"Step {next_ost_step_id}: {io_output.strip().strip('\n')}" for io_output in io_output_list]))
+        print(f"rag step list {ost_step_list}")
+
+        #! generate potential answer to the user question
+        potential_answers_list: List[List[str]] = []  # essentially direct answer list
+        if self.enable_potential_score:
+            for ost_step in ost_step_list:
+                response_prefix = make_response_prefix(solution_trace, Node_Type.OST_STEP, new_ost_step=ost_step)
+
+                potential_score_input = "Question: " + user_question + "\nAnswer: " + response_prefix
+
+                potential_score_output = self.io.generate(
+                    potential_score_input,
+                    num_return=self.num_votes,
+                    max_tokens=128,
+                    stop_tokens=self.fewshot_cot_config["stop_tokens"],
+                )
+                potential_score_input2 = [
+                    "Question: "
+                    + user_question
+                    + "\nAnswer: "
+                    + response_prefix
+                    + z
+                    + "\nTherefore, the answer is"
+                    for z in potential_score_output
+                ]
+                cleaned_io_output_list = self.io.generate(
+                    potential_score_input2,
+                    num_return=1,
+                    max_tokens=128,
+                    stop_tokens=self.fewshot_cot_config["stop_tokens"],
+                )
+                cleaned_io_output_list = [z[0] for z in cleaned_io_output_list]
+
+                potential_answers_list.append(
+                    [self.evaluator.extract_answer_from_model_completion(o) for o in cleaned_io_output_list]
+                )
+        else:
+            potential_answers_list = [None] * len(ost_step_list)
+
+        return ost_step_list, potential_answers_list
+#--------------------------------------------------
         #! create children
         if self.node_type is Node_Type.USER_QUESTION:
             with concurrent.futures.ThreadPoolExecutor(max_workers=4) as executor:
@@ -2720,6 +3155,32 @@ def main():
                         left_boundary=args.mask_left_boundary,
                         right_boundary=args.mask_right_boundary,
                     )
+#----------------------------------------------
+
+def mask_solution_trace(
+    solution_trace_str: str, num_return: int, left_boundary: float, right_boundary: float
+) -> list[str]:
+    # opasdjifpoaisdfjpoasidfjapsodifj, num_return: 4, left: 0.2, right: 0.8
+    # return: opasd, opasdjifp, opasdjifpoaisdfj, opasdjifpoaisdfjpoasidfjaps
+    if num_return == 1:
+        interval = 0
+    else:
+        assert num_return > 1
+        assert right_boundary >= left_boundary, f"right_boundary: {right_boundary} < left_boundary: {left_boundary}"
+        interval = (right_boundary - left_boundary) / (num_return - 1)
+
+    words_in_solution_trace = solution_trace_str.split(" ")
+    ost_len = len(words_in_solution_trace)
+    # Mask the solution trace string from least to most
+    masked_solution_traces = []
+    for i in range(num_return):
+        prefix_part_ratio = left_boundary + i * interval
+        prefix_part_num_words = math.ceil(ost_len * prefix_part_ratio)
+        prefix_part_str = " ".join(words_in_solution_trace[:prefix_part_num_words])
+        masked_solution_traces.append(prefix_part_str)
+
+    return masked_solution_traces
+#------------------------------------------
                     final_answer = evaluator.extract_answer_from_model_completion(final_step)
                     candidate = Candidate(
                         solution_trace,
