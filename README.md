@@ -147,6 +147,19 @@ def _create_children(self):
         value_list.append(likelihood)
 
         return direct_answer_list, value_list
+    def _get_most_likely_answer(self, io_output_list: List[str]) -> Tuple[str, float]:
+        assert len(io_output_list) > 0
+
+        if len(io_output_list) == 1:
+            most_confident_answer_full_completion = io_output_list[0]
+            confidence = 1
+        else:
+            _, most_confident_answer_full_completion, _, confidence = self.evaluator.find_most_confident_answer(
+                io_output_list
+            )
+            assert confidence > 0
+
+        return most_confident_answer_full_completion, confidence
 #---------------------------------
         def do_action_generate_subquestions():
             verbose_print(f"---- Generating subquestions for node {self.id}...", self.verbose)
