@@ -124,102 +124,9 @@ def _create_children(self):
                         direct_answer=direct_answer,
                     )
                 )
-#-=---------------------
-    def generate_direct_answers(self, user_question: str, paraphrased: bool, hint: str):
-        direct_answer_list, value_list = [], []
 
-        #! few shot cot
-        num_return = self.mcts_num_last_votes
-        io_input, cleaned_io_output_list = self._fewshot_cot_answer_question(
-            question=user_question, paraphrased=paraphrased, num_return=num_return, hint=hint
-        )
 
-        try:
-            most_likely_answer, likelihood = self._get_most_likely_answer(cleaned_io_output_list)
-        except Exception as e:
-            raise GeneratorError(
-                source="generate direct answer from: few shot cot",
-                io_input=io_input,
-                io_output_list=cleaned_io_output_list,
-            )
 
-        direct_answer_list.append(most_likely_answer)
-        value_list.append(likelihood)
-
-        return direct_answer_list, value_list
-    def _get_most_likely_answer(self, io_output_list: List[str]) -> Tuple[str, float]:
-        assert len(io_output_list) > 0
-
-        if len(io_output_list) == 1:
-            most_confident_answer_full_completion = io_output_list[0]
-            confidence = 1
-        else:
-            _, most_confident_answer_full_completion, _, confidence = self.evaluator.find_most_confident_answer(
-                io_output_list
-            )
-            assert confidence > 0
-
-        return most_confident_answer_full_completion, confidence
-    def find_most_confident_answer(self, completions: List[str], prior_weights: List[float] = None):
-        """Returns the most confident answer, its completion, its id in the input list, and its confidence."""
-        if completions is None or len(completions) == 0:
-            return None, None, None, None
-
-        answer2completions = defaultdict(list)
-        answer2ids = defaultdict(list)
-        for id, c in enumerate(completions):
-            try:
-                model_answer = self.extract_answer_from_model_completion(c)
-                has_existed = False
-                for existing_answer in answer2completions.keys():
-                    if self.check_answers_equiv(model_answer, existing_answer):
-                        assert not has_existed
-                        has_existed = True
-                        answer2completions[existing_answer].append(c)
-                        answer2ids[existing_answer].append(id)
-                if not has_existed:
-                    answer2completions[model_answer].append(c)
-                    answer2ids[model_answer].append(id)
-            except:
-                pass
-
-        assert len(answer2completions.keys()) > 0, "There are no valid completions."
-        if prior_weights is not None:
-            assert len(completions) == len(prior_weights)
-            completion2count = {}
-            for answer, answer_completions in answer2completions.items():
-                count = len(answer_completions)
-                for answer_completion in answer_completions:
-                    completion2count[answer_completion] = count
-
-            completion2score = {}
-            for id, (completion, count) in enumerate(completion2count.items()):
-                prior_weight = prior_weights[id]
-                score = prior_weight * (count / len(completions))
-                completion2score[completion] = score
-
-            most_confident_completion = max(completion2score.keys(), key=lambda x: completion2score[x])
-
-            return (
-                self.extract_answer_from_model_completion(most_confident_completion),
-                most_confident_completion,
-                completions.index(most_confident_completion),
-                completion2score[most_confident_completion],
-            )
-        else:
-            most_confident_answer = max(answer2completions.keys(), key=lambda x: len(answer2completions[x]))
-            assert (
-                len(answer2completions[most_confident_answer]) > 0
-            ), "There are no completions for the most confident answer."
-            confidence = len(answer2completions[most_confident_answer]) / len(completions)
-            assert confidence > 0
-            return (
-                most_confident_answer,
-                answer2completions[most_confident_answer][0],
-                answer2ids[most_confident_answer][0],
-                confidence,
-            )
-#---------------------------------
         def do_action_generate_subquestions():
             verbose_print(f"---- Generating subquestions for node {self.id}...", self.verbose)
 
@@ -311,28 +218,6 @@ def _create_children(self):
                         potential_answers=deepcopy(potential_answers),
                     )
                 )
-
-        def do_action_generate_ost_step(parent_is_subquestion=False):
-            verbose_print(f"---- Generating one-step thought steps for node {self.id}...", self.verbose)
-
-            #! ACTION: generate one-step thought step
-            ost_step_list, potential_answers_list = self.generator.generate_ost_step(
-                user_question=self.user_question,
-                solution_trace=self.solution_trace,
-                paraphrased=self.paraphrased,
-                parent_is_subquestion=parent_is_subquestion,
-            )
-            for ost_step, potential_answers in zip(ost_step_list, potential_answers_list):
-                self.children.append(
-                    Reasoning_MCTS_Node(
-                        parent=self,
-                        depth=self.depth + 1,
-                        node_type=Node_Type.OST_STEP,
-                        ost_step=ost_step,
-                        potential_answers=deepcopy(potential_answers),
-                    )
-                )
-
         def do_action_generate_question_retrieve():
             verbose_print(f"---- Generating question retrieve steps for node {self.id}...", self.verbose)
 
@@ -351,27 +236,7 @@ def _create_children(self):
                     )
                 )
 
-        def do_action_generate_rag_step(parent_is_subquestion=False):
-            verbose_print(f"---- Generating rag-step steps for node {self.id}...", self.verbose)
 
-            #! ACTION: generate one-step thought step
-            ost_step_list, potential_answers_list = self.generator.generate_rag_step(
-                user_question=self.user_question,
-                solution_trace=self.solution_trace,
-                paraphrased=self.paraphrased,
-                parent_is_subquestion=parent_is_subquestion,
-            )
-            print(f"rag step: {ost_step_list}")
-            for ost_step, potential_answers in zip(ost_step_list, potential_answers_list):
-                self.children.append(
-                    Reasoning_MCTS_Node(
-                        parent=self,
-                        depth=self.depth + 1,
-                        node_type=Node_Type.OST_STEP,
-                        ost_step=ost_step,
-                        potential_answers=deepcopy(potential_answers),
-                    )
-                )
 
         #! create children
         if self.node_type is Node_Type.USER_QUESTION:
@@ -499,6 +364,107 @@ def _create_children(self):
                 weight = self._get_weight(rollout_id)
                 return self.Q[node] / self.N[node] + weight * math.sqrt(math.log(self.N[parent_node]) / self.N[node])
 
+class IO_System:
+    """Input/Output system"""
+
+    def __init__(self, args, tokenizer, model) -> None:
+        self.api = args.api
+        if self.api == "together":
+            assert tokenizer is None and model is None
+        elif self.api == "gpt3.5-turbo":
+            assert tokenizer is None and isinstance(model, str)
+        self.model_ckpt = args.model_ckpt
+        self.temperature = args.temperature
+        self.top_k = args.top_k
+        self.top_p = args.top_p
+        self.tokenizer = tokenizer
+        self.model = model
+
+        self.call_counter = 0
+        self.token_counter = 0
+
+    def generate(self, model_input, max_tokens: int, num_return: int, stop_tokens):
+        if self.api == "gpt-4o" and len(stop_tokens) > 4:
+            stop_tokens = stop_tokens[:4]
+
+        if isinstance(model_input, str):
+            if self.api == "vllm":
+                vllm_response = generate_with_vLLM_model(
+                    self.model,
+                    input=model_input,
+                    temperature=self.temperature,
+                    top_p=self.top_p,
+                    top_k=self.top_k,
+                    n=num_return,
+                    max_tokens=max_tokens,
+                    stop=stop_tokens,
+                )
+                io_output_list = [o.text for o in vllm_response[0].outputs]
+                self.call_counter += 1
+                self.token_counter += sum([len(o.token_ids) for o in vllm_response[0].outputs])
+            elif self.api == "gpt-4o":
+                gpt_response = generate_n_with_OpenAI_model(
+                    prompt=model_input,
+                    n=num_return,
+                    model_ckpt=self.model,
+                    max_tokens=max_tokens,
+                    temperature=self.temperature,
+                    top_p=self.top_p,
+                    top_k=self.top_k,
+                    stop=stop_tokens,
+                )
+                io_output_list = gpt_response
+                self.call_counter += num_return
+                self.token_counter += 0
+            
+            elif self.api == "debug":
+                io_output_list = ["Debug: The answer is generated with debug mode, 233." for _ in range(num_return)]
+            else:
+                raise NotImplementedError(f"API {self.api} is not implemented.")
+        elif isinstance(model_input, list):
+            if self.api == "vllm":
+                vllm_response = generate_with_vLLM_model(
+                    self.model,
+                    input=model_input,
+                    temperature=self.temperature,
+                    top_p=self.top_p,
+                    top_k=self.top_k,
+                    n=num_return,
+                    max_tokens=max_tokens,
+                    stop=stop_tokens,
+                )
+                io_output_list = [
+                    [o.text for o in resp_to_single_input.outputs] for resp_to_single_input in vllm_response
+                ]
+                self.call_counter += 1
+                self.token_counter += sum(
+                    [
+                        sum([len(o.token_ids) for o in resp_to_single_input.outputs])
+                        for resp_to_single_input in vllm_response
+                    ]
+                )
+            elif self.api == "gpt-4o":
+                io_output_list = generate_prompts_with_OpenAI_model(
+                    prompts=model_input,
+                    n=num_return,
+                    model_ckpt=self.model,
+                    max_tokens=max_tokens,
+                    temperature=self.temperature,
+                    top_p=self.top_p,
+                    top_k=self.top_k,
+                    stop=stop_tokens,
+                )
+                self.call_counter += num_return * len(model_input)
+                self.token_counter += 0
+            elif self.api == "debug":
+                io_output_list = [
+                    ["Debug: The answer is generated with debug mode, 233." for _ in range(num_return)]
+                    for _ in model_input
+                ]
+            else:
+                raise NotImplementedError(f"API {self.api} is not implemented.")
+
+        return io_output_list
 
 class Generator:
     """Generator generates children nodes"""
@@ -594,6 +560,8 @@ class Generator:
         fewshot_cot_prompt = self.fewshot_cot_prompt if not paraphrased else self.fewshot_cot_prompt_rephrased
         question += "\n\n" + hint if hint is not None else ""
         io_input = self.fewshot_cot_config["prompt_template"].format(examples=fewshot_cot_prompt, instruction=question)
+"prompt_template": "A chat between a curious user and an AI assistant. The assistant gives step-by-step solutions to the user's questions. You are presented with observations or results related to a phenomenon. Based on the information provided, infer the possible reasons or explanations for the observed outcomes. In the end of assistant's response, a final answer must be given in the format of \"The answer is: <ANSWER>.\", where <ANSWER> should only be \"A\", \"B\", \"C\" or \"D\" without any description.\n\n{examples}\n\n### Instruction:\n{instruction}\n\n### Response:\n\nPlease answer it in a complete sentence",
+
         io_output_list = self.io.generate(
             io_input,
             num_return=num_return,
@@ -641,7 +609,78 @@ class Generator:
         value_list.append(likelihood)
 
         return direct_answer_list, value_list
+    def _get_most_likely_answer(self, io_output_list: List[str]) -> Tuple[str, float]:
+        assert len(io_output_list) > 0
 
+        if len(io_output_list) == 1:
+            most_confident_answer_full_completion = io_output_list[0]
+            confidence = 1
+        else:
+            _, most_confident_answer_full_completion, _, confidence = self.evaluator.find_most_confident_answer(
+                io_output_list
+            )
+            assert confidence > 0
+
+        return most_confident_answer_full_completion, confidence
+    def find_most_confident_answer(self, completions: List[str], prior_weights: List[float] = None):
+        """Returns the most confident answer, its completion, its id in the input list, and its confidence."""
+        if completions is None or len(completions) == 0:
+            return None, None, None, None
+
+        answer2completions = defaultdict(list)
+        answer2ids = defaultdict(list)
+        for id, c in enumerate(completions):
+            try:
+                model_answer = self.extract_answer_from_model_completion(c)
+                has_existed = False
+                for existing_answer in answer2completions.keys():
+                    if self.check_answers_equiv(model_answer, existing_answer):
+                        assert not has_existed
+                        has_existed = True
+                        answer2completions[existing_answer].append(c)
+                        answer2ids[existing_answer].append(id)
+                if not has_existed:
+                    answer2completions[model_answer].append(c)
+                    answer2ids[model_answer].append(id)
+            except:
+                pass
+
+        assert len(answer2completions.keys()) > 0, "There are no valid completions."
+        if prior_weights is not None:
+            assert len(completions) == len(prior_weights)
+            completion2count = {}
+            for answer, answer_completions in answer2completions.items():
+                count = len(answer_completions)
+                for answer_completion in answer_completions:
+                    completion2count[answer_completion] = count
+
+            completion2score = {}
+            for id, (completion, count) in enumerate(completion2count.items()):
+                prior_weight = prior_weights[id]
+                score = prior_weight * (count / len(completions))
+                completion2score[completion] = score
+
+            most_confident_completion = max(completion2score.keys(), key=lambda x: completion2score[x])
+
+            return (
+                self.extract_answer_from_model_completion(most_confident_completion),
+                most_confident_completion,
+                completions.index(most_confident_completion),
+                completion2score[most_confident_completion],
+            )
+        else:
+            most_confident_answer = max(answer2completions.keys(), key=lambda x: len(answer2completions[x]))
+            assert (
+                len(answer2completions[most_confident_answer]) > 0
+            ), "There are no completions for the most confident answer."
+            confidence = len(answer2completions[most_confident_answer]) / len(completions)
+            assert confidence > 0
+            return (
+                most_confident_answer,
+                answer2completions[most_confident_answer][0],
+                answer2ids[most_confident_answer][0],
+                confidence,
+            )
     def generate_subquestions(
         self,
         user_question: str,
@@ -2446,7 +2485,7 @@ class Reasoning_MCTS_Node(MCTS_Node):
             + '\n'
             + f"The text you generate must start with the string Step {next_ost_step_id}:\n"
         )
-
+"prompt_template": "A chat between a curious user and an AI assistant. The assistant gives step-by-step solutions to the user's questions. You are presented with observations or results related to a phenomenon. Based on the information provided, infer the possible reasons or explanations for the observed outcomes. In the end of assistant's response, a final answer must be given in the format of \"The answer is: <ANSWER>.\", where <ANSWER> should only be \"A\", \"B\", \"C\" or \"D\" without any description.\n\n{examples}\n\n### Instruction:\n{instruction}\n\n### Response:\n\nPlease answer it in a complete sentence",
         io_output_list = self.io.generate(
             model_input=io_input, max_tokens=256, num_return=self.num_a1_steps, stop_tokens=[f"Step {next_ost_step_id+1}", "\n\n\n"]
         )
