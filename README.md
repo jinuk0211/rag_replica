@@ -2854,23 +2854,86 @@ if __name__ == "__main__":
     prompts_dir = os.path.join(args.prompts_root, args.dataset_name)
 
     args.fewshot_cot_prompt_path = os.path.join(prompts_dir, "fewshot_cot", "fewshot_cot_prompt.txt")
+#"fewshot_cot_prompt.txt"
+### Instruction:
+There are 15 trees in the grove. Grove workers will plant trees in the grove today. After they are done, there will be 21 trees. How many trees did the grove workers plant today?
+### Response:
+Let's think step by step. There are 15 trees originally. Then there were 21 trees after some more were planted. So there must have been 21 - 15 = 6. The answer is: 6.
     args.fewshot_cot_config_path = os.path.join(prompts_dir, "fewshot_cot", "fewshot_cot_config.json")
-
+#"fewshot_cot_config.json"
+{
+    "prompt_template": "A chat between a curious user and an AI assistant. The assistant gives step-by-step solutions to the user's questions. You are presented with observations or results related to a phenomenon. Based on the information provided, infer the possible reasons or explanations for the observed outcomes. In the end of assistant's response, a final answer must be given in the format of \"The answer is: <ANSWER>.\", where <ANSWER> should only be \"A\", \"B\", \"C\" or \"D\" without any description.\n\n{examples}\n\n### Instruction:\n{instruction}\n\n### Response:\n\nPlease answer it in a complete sentence",
+    "stop_tokens": [
+        "</s>",
+        "\n\n\n"
+    ],
+    "answer_marker": "answer is"
+}
     args.fewshot_ost_prompt_path = os.path.join(prompts_dir, "fewshot_ost", "fewshot_ost_prompt.txt")
+#prompts/GPQA/fewshot_ost/fewshot_ost_prompt.txt
+### Instruction:
+There are 15 trees in the grove. Grove workers will plant trees in the grove today. After they are done, there will be 21 trees. How many trees did the grove workers plant today?
+
+### Response:
+Let's think step by step.
+Step 1: Identify the country that has Azad Kashmir. Azad Kashmir is a region administered by Pakistan.
+Step 2: Determine who was the president of Pakistan in 1980. In 1980, the president of Pakistan was Muhammad Zia-ul-Haq.
+The answer is: Muhammad Zia-ul-Haq.
+
+#prompts/CWEBQA/fewshot_ost/fewshot_ost_prompt.txt
+### Instruction:
+There are 15 trees in the grove. Grove workers will plant trees in the grove today. After they are done, there will be 21 trees. How many trees did the grove workers plant today?
+
+### Response:
+Let's think step by step.
+Step 1: Identify the country that has Azad Kashmir. Azad Kashmir is a region administered by Pakistan.
+Step 2: Determine who was the president of Pakistan in 1980. In 1980, the president of Pakistan was Muhammad Zia-ul-Haq.
+The answer is: Muhammad Zia-ul-Haq.
+
     args.fewshot_ost_config_path = os.path.join(prompts_dir, "fewshot_ost", "fewshot_ost_config.json")
+#"fewshot_ost_config.json"
+{
+    "prompt_template": "A chat between a curious user and an AI assistant. The assistant gives step-by-step solutions to the user's questions. Directly give step-by-step solution and each step should have its index. At the final step, a conclusive answer is given in the format of \"The answer is: <ANSWER>.\", where <ANSWER> should be a concise answer.\n\n### Instruction:\n{instruction}\n\n### Response:\nLet's think step by step.\n",
+    "stop_tokens": [
+        "</s>","Question:","Question","USER:","USER",
+        "ASSISTANT:","ASSISTANT",
+        "Instruction:","Instruction",
+        "Response:","Response",
+        "#","# ","###","### "
+    ],
+    "answer_marker": "answer is"
+}
 
     args.decompose_template_path = os.path.join(prompts_dir, "decompose", "decompose_template.json")
     args.decompose_prompt_path = os.path.join(prompts_dir, "decompose", "decompose_prompt.txt")
 
     if not args.disable_a5:
         args.rephrasing_prompt_template_path = os.path.join(prompts_dir, "rephrasing_prompt_template.txt")
+#prompts/FMT/rephrasing_prompt_template.txt
+
+You are an AI assistant to help me rephrase questions by splitting the question context into conditions. In your rephrased question, remember to fully express the information in the original question.
+
+Examples:
+Original Question: Who was the president in 1980 of the country that has Azad Kashmir?
+Rephrased Question: Given a list of conditions, please answer the question. Condition 1: There is a country that has Azad Kashmir. Condition 2: We need to identify who was the president of that country in 1980. Question: Who was the president in 1980 of the country that has Azad Kashmir?
+
+Original Question: What is the mascot of the team that has Nicholas S. Zeppos as its leader?
+Rephrased Question: Given a list of conditions, please answer the question. Condition 1: Nicholas S. Zeppos serves as the leader of a particular team. Condition 2: We need to identify the mascot of that team. Question: What is the mascot of the team led by Nicholas S. Zeppos?
+#FMT만 존재
         if args.modify_prompts_for_rephrasing:
             args.fewshot_cot_prompt_rephrased_path = os.path.join(
                 prompts_dir, "fewshot_cot", "fewshot_cot_prompt_rephrased.txt"
             )
+#prompts/GPQA/fewshot_cot/fewshot_cot_prompt_rephrased.txt
+### Instruction:
+Given a list of conditions, please answer the question. Condition 1: There is a country that has Azad Kashmir. Condition 2: We need to identify who was the president of that country in 1980. Question: Who was the president in 1980 of the country that has Azad Kashmir?
+
+### Response:
+Let's think step by step. There are 15 trees originally. Then there were 21 trees after some more were planted. So there must have been 21 - 15 = 6. The answer is: 6.
+
             args.fewshot_ost_prompt_rephrased_path = os.path.join(
                 prompts_dir, "fewshot_ost", "fewshot_ost_prompt_rephrased.txt"
-            )
+            ) #존재 안함
             args.decompose_prompt_rephrased_path = os.path.join(
                 prompts_dir, "decompose", "decompose_prompt_rephrased.txt"
             )
@@ -2883,6 +2946,44 @@ if __name__ == "__main__":
     print(args)
     save_args(args)
     main(args)
+#GPQA시
+#prompts/GPQA/decompose/decompose_prompt.txt
+'''Given a question, please decompose it into sub-questions. For each sub-question, please answer it in one complete sentence, ending with "The answer is ". When the original question is answerable, please start the subquestion with "Now we can answer the question: <original question>".
+
+Question 1: Who was the president in 1980 of the country that has Azad Kashmir?
+Question 1.1: Which country contains Azad Kashmir?
+Answer 1.1: The answer is: Pakistan.
+Question 1.2: Who was the president of Pakistan in 1980?
+Answer 1.2: The answer is: Muhammad Zia-ul-Haq.
+Question 1.3: Now we can answer the question: Who was the president in 1980 of the country that has Azad Kashmir?
+Answer 1.3: The answer is: Muhammad Zia-ul-Haq.'''
+
+#prompts/GPQA/decompose/decompose_template.json
+{
+    "question_prefix": "Question 5: ",
+    "subquestion_prefix": "Question 5.{}:",
+    "overall_question_prefix": "Question 5.{}: Now we can answer the question: {}\n",
+    "answer_prefix": "Answer 5.{}: ",
+    "index": 5
+}
+#prompts/GPQA/decompose/decompose_prompt_rephrased.txt
+'''Given a question, please decompose it into sub-questions. For each sub-question, please answer it in one complete sentence, ending with "The answer is ". When the original question is answerable, please start the subquestion with "Now we can answer the question: <original question>".
+
+Question 1: Given a list of conditions, please answer the question. Condition 1: There is a country that has Azad Kashmir. Condition 2: We need to identify who was the president of that country in 1980. Question: Who was the president in 1980 of the country that has Azad Kashmir?
+Question 1.1: Which country contains Azad Kashmir?
+Answer 1.1: The answer is: Pakistan.
+Question 1.2: Who was the president of Pakistan in 1980?
+Answer 1.2: The answer is: Muhammad Zia-ul-Haq.
+Question 1.3: Now we can answer the question: Who was the president in 1980 of the country that has Azad Kashmir?
+Answer 1.3: The answer is: Muhammad Zia-ul-Haq.
+
+Question 2: Given a list of conditions, please answer the question. Condition 1: There is a country that has Azad Kashmir. Condition 2: We need to identify who was the president of that country in 1980. Question: Who was the president in 1980 of the country that has Azad Kashmir?
+Question 2.1: Which team is led by Nicholas S. Zeppos?
+Answer 2.1: The answer is: Vanderbilt University, represented by the Vanderbilt Commodores.
+Question 2.2: What is the mascot of the Vanderbilt Commodores?
+Answer 2.2: The answer is: Mr. C.
+Question 2.3: Now we can answer the question: What is the mascot of the team led by Nicholas S. Zeppos?
+Answer 2.3: The answer is: Mr. C.'''
 ```
 
 ```python
